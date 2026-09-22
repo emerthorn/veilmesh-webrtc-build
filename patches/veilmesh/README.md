@@ -1,2 +1,5 @@
-# Наши патчи к форку libwebrtc (D5): флаги, экспорт символов, шимы. Логики — нет.
-# Применяются build_*.sh после патчей livekit. Пока пусто.
+# VeilMesh patches
+
+Patches applied on top of LiveKit's after `build_*.sh` runs theirs. Scope:
+build flags, symbol export, small platform shims — never engine logic.
+Empty for now.

@@ -1,11 +1,12 @@
 name: Build libwebrtc
 
-# Один коммит форка (VERSION / .gclient) → все срезы одной версией → релиз с
-# SHA256SUMS. Запуск: тег `webrtc-<sha7>-veilmesh.<N>` или вручную.
+# One pinned libwebrtc commit (VERSION / .gclient) -> every slice built from it
+# -> a GitHub Release with SHA256SUMS. Triggered by a `webrtc-<sha7>-veilmesh.<N>`
+# tag or manually.
 #
-# Раннеры — хостовые GitHub (как у livekit): на ubuntu место освобождает
-# free-disk-space, на macOS его хватает. Если сборка не влезает — заменить
-# `runs-on` на self-hosted с той же меткой ОС.
+# Runs on GitHub-hosted runners; free-disk-space makes room on Ubuntu. If a
+# slice outgrows the hosted image, switch its `runs-on` to a self-hosted
+# runner with the same OS.
 
 on:
   push:
@@ -14,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       targets:
-        description: "Список срезов через запятую (пусто = все): ios-device-arm64,ios-simulator-arm64,mac-arm64,mac-x64,android-arm64,android-arm,android-x64,linux-x64"
+        description: "Comma-separated subset of slices (empty = all): ios-device-arm64,ios-simulator-arm64,mac-arm64,mac-x64,android-arm64,android-arm,android-x64,linux-x64"
         required: false
         default: ""
 
@@ -35,7 +36,7 @@ jobs:
         profile: [release]
     name: ${{ matrix.target.out }}-${{ matrix.profile }}
     runs-on: ${{ matrix.target.os }}
-    # Ручной запуск с фильтром: собираем только перечисленное.
+    # Manual runs may restrict the matrix to the listed slices.
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.targets == '' || contains(github.event.inputs.targets, matrix.target.out) }}
     steps:
       - name: Variables
@@ -63,7 +64,7 @@ jobs:
         if: ${{ runner.os == 'macOS' }}
         run: |
           brew install ninja
-          # Самый свежий Xcode из установленных на образе.
+          # Newest Xcode present on the runner image.
           XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
           if [ -n "$XCODE" ]; then sudo xcode-select --switch "$XCODE/Contents/Developer"; fi
           xcodebuild -version
@@ -83,10 +84,10 @@ jobs:
       - name: Pin check
         shell: bash
         run: |
-          # .gclient и VERSION обязаны указывать на один коммит.
+          # .gclient and VERSION must pin the same commit.
           set -e
           . ./VERSION
-          grep -q "$WEBRTC_COMMIT" .gclient || { echo ".gclient не совпадает с VERSION"; exit 1; }
+          grep -q "$WEBRTC_COMMIT" .gclient || { echo ".gclient does not match VERSION"; exit 1; }
           echo "target_os = [\"${{ matrix.target.name }}\"]" >> .gclient
 
       - name: Build
@@ -141,4 +142,4 @@ jobs:
           . ./VERSION
           gh release create "${{ github.ref_name }}" dist/webrtc-*.zip dist/SHA256SUMS \
             --title "libwebrtc ${{ github.ref_name }}" \
-            --notes "Форк emerthorn/webrtc @ ${WEBRTC_COMMIT} (upstream livekit tag ${WEBRTC_UPSTREAM_TAG}). Проверка: sha256sum -c SHA256SUMS."
+            --notes "libwebrtc from emerthorn/webrtc @ ${WEBRTC_COMMIT} (same sources as LiveKit's ${WEBRTC_UPSTREAM_TAG}). Verify with: sha256sum -c SHA256SUMS --ignore-missing"

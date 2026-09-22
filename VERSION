@@ -1,6 +1,6 @@
-# Что собираем. Единственный источник правды для пайплайна и для тегов.
-# WEBRTC_COMMIT — коммит форка emerthorn/webrtc (ветка veilmesh), тот же, что
-# в .gclient. Тег релиза: webrtc-<первые 7 символов>-veilmesh.<N>.
+# What gets built. The single source of truth for the pipeline and for tags.
+# WEBRTC_COMMIT is the commit of the emerthorn/webrtc fork (branch veilmesh)
+# and must match .gclient; CI checks that. Release tag: webrtc-<sha7>-veilmesh.<BUILD_REVISION>.
 WEBRTC_REPO=https://github.com/emerthorn/webrtc.git
 WEBRTC_COMMIT=89d790b40447c3c5c54c3edd58aa53d285e35fa7
 WEBRTC_UPSTREAM_TAG=webrtc-89d790b

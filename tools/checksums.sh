@@ -1,6 +1,7 @@
 #!/bin/bash
-# Считает SHA256SUMS по всем webrtc-*.zip в каталоге (по умолчанию — текущем).
-# Формат — как у `sha256sum`, чтобы проверять `sha256sum -c SHA256SUMS`.
+# Writes SHA256SUMS for every webrtc-*.zip in the given directory (default:
+# current). Output is in `sha256sum` format so it can be verified with
+# `sha256sum -c SHA256SUMS --ignore-missing`.
 set -euo pipefail
 dir="${1:-.}"
 cd "$dir"

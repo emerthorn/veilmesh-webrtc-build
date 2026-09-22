@@ -20,7 +20,7 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Сборка libwebrtc (Chromium toolchain, десятки ГБ) — никогда в репозиторий.
+# libwebrtc checkout and build output (Chromium toolchain, tens of GB) — never committed.
 .cipd
 src
 .gclient_*

@@ -1,75 +1,105 @@
 # veilmesh-webrtc-build
 
-Собственная сборка libwebrtc для VeilMesh (решение D5,
-`veilmesh/docs/CALLS_ARCHITECTURE_2026-09-21.md` §9): один зафиксированный
-коммит форка → все платформенные срезы одной версией → релиз с `SHA256SUMS`.
-Сторонние prebuilt-артефакты в production запрещены; этот репозиторий их
-заменяет.
+Reproducible builds of [libwebrtc](https://webrtc.googlesource.com/src/) for
+the VeilMesh messenger: one pinned source commit, every platform slice built
+from it in CI, published as a GitHub Release with a `SHA256SUMS` manifest.
 
-## Что и откуда
+Consumers pin a release **tag and the checksum** of each archive; nothing is
+downloaded on trust.
 
-| Что | Где |
+## Sources
+
+| Component | Where it comes from |
 |---|---|
-| Исходники libwebrtc | форк [`emerthorn/webrtc`](https://github.com/emerthorn/webrtc), ветка `veilmesh` (от `webrtc-sdk/webrtc`, коммит в `VERSION`) |
-| Скрипты и патчи сборки | этот репозиторий — копия `webrtc-sys/libwebrtc` из livekit `rust-sdks` (Apache-2.0) с нашими правками; наши патчи кладутся в `patches/veilmesh/` |
-| Потребитель | форк [`emerthorn/rust-sdks`](https://github.com/emerthorn/rust-sdks), ветка `veilmesh`: `webrtc-sys-build` качает релиз отсюда по тегу и сверяет sha256 |
+| libwebrtc | [`emerthorn/webrtc`](https://github.com/emerthorn/webrtc), branch `veilmesh` — a fork of [`webrtc-sdk/webrtc`](https://github.com/webrtc-sdk/webrtc) (the LiveKit fork of upstream WebRTC). The exact commit is in [`VERSION`](VERSION) and mirrored in [`.gclient`](.gclient); CI refuses to build if the two disagree. |
+| Build scripts and patches | This repository. `build_*.sh`, `patches/*.patch`, `prefixed-jni/` and `boringssl_prefix_symbols.txt` are taken from LiveKit's [`rust-sdks`](https://github.com/livekit/rust-sdks) (`webrtc-sys/libwebrtc`, Apache-2.0) and kept unmodified, so the first release is built from the same commit, flags and patches as LiveKit's own `webrtc-89d790b` prebuilt. VeilMesh-specific patches live in [`patches/veilmesh/`](patches/veilmesh/). |
+| Consumer | [`emerthorn/rust-sdks`](https://github.com/emerthorn/rust-sdks), branch `veilmesh`: its `webrtc-sys-build` crate downloads a release from here by tag and verifies the archive against a pinned sha256 before extracting it. |
 
-Первый релиз собирается из того же коммита `89d790b`, из которого livekit
-собрал свой `webrtc-89d790b`, с теми же флагами и патчами — чтобы любая
-разница в поведении списывалась на сборку, а не на код.
+## Versioning
 
-## Версия и теги
+Release tags have the form `webrtc-<sha7>-veilmesh.<revision>`, e.g.
+`webrtc-89d790b-veilmesh.1`:
 
-`VERSION` — единственный источник правды: `WEBRTC_COMMIT` (полный sha форка,
-дублируется в `.gclient`; CI проверяет совпадение), `BUILD_REVISION`.
-Тег релиза: `webrtc-<sha7>-veilmesh.<BUILD_REVISION>`, например
-`webrtc-89d790b-veilmesh.1`. Новая ревизия при тех же исходниках (поменялись
-флаги/патчи) — `+1` к `BUILD_REVISION`; новый коммит libwebrtc — новый sha.
+- `<sha7>` — first seven characters of the libwebrtc commit in `VERSION`;
+- `<revision>` — `BUILD_REVISION` from `VERSION`, bumped when the sources stay
+  the same but flags or patches change.
 
-## Сборка в CI
+A new libwebrtc commit is a new `<sha7>`; the revision restarts at 1.
 
-`.github/workflows/build.yml`: матрица `ios-device-arm64`,
-`ios-simulator-arm64`, `mac-arm64`, `mac-x64`, `android-{arm64,arm,x64}`,
-`linux-x64` на хостовых раннерах GitHub (macOS 15 / Ubuntu 24.04, как у
-livekit); Windows — с этапа C. Запуск: `workflow_dispatch` (можно указать
-подмножество срезов) или push тега `webrtc-*` — тогда после сборки создаётся
-GitHub Release с zip'ами и `SHA256SUMS`.
+## Release contents
 
-Один срез — от 40 минут (Android) до 2 часов (iOS/macOS) на хостовом
-раннере; checkout Chromium-toolchain — 20–40 ГБ. Если репозиторий приватный,
-macOS-минуты считаются ×10 — публичный репозиторий собирает бесплатно.
+Each release carries one archive per slice plus `SHA256SUMS`:
 
-Каждый zip несёт `PROVENANCE.txt` (коммит libwebrtc, коммит и тег этого
-репозитория, раннер, время) и копию `VERSION`.
-
-## Сборка локально
-
-```bash
-# macOS: Xcode + brew install ninja; Linux: ninja-build pkg-config openjdk-17-jdk
-echo 'target_os = ["ios"]' >> .gclient       # или mac / android / linux
-./build_ios.sh --arch arm64 --profile release                # device
-./build_ios.sh --arch arm64 --profile release --environment simulator
-./build_macos.sh --arch arm64 --profile release
-./build_android.sh --arch arm64 --profile release            # только Linux-хост
+```
+webrtc-ios-device-arm64-release.zip
+webrtc-ios-simulator-arm64-release.zip
+webrtc-mac-arm64-release.zip
+webrtc-mac-x64-release.zip
+webrtc-android-arm64-release.zip
+webrtc-android-arm-release.zip
+webrtc-android-x64-release.zip
+webrtc-linux-x64-release.zip
+SHA256SUMS
 ```
 
-Результат — каталог `<os>-<arch>-release/` (`lib/libwebrtc.a`, `include/`,
-`webrtc.ninja`, `LICENSE.md`; для Android ещё `libwebrtc.jar`). Подключить к
-ядру без релиза: `LK_CUSTOM_WEBRTC=<путь к каталогу> cargo build ...`.
+An archive unpacks to `<os>-<arch>-release/` containing `lib/libwebrtc.a`,
+`include/` (headers), `webrtc.ninja` (the compile definitions consumers must
+replay), `LICENSE.md` (licenses of everything linked in), a copy of
+`VERSION`, and `PROVENANCE.txt` (libwebrtc commit, commit and tag of this
+repository, runner image, build time). Android archives additionally contain
+`libwebrtc.jar`, the Java half of the SDK.
 
-## Что здесь наше, а что livekit
+Verify a download:
 
-- `build_*.sh`, `patches/*.patch`, `prefixed-jni/`, `boringssl_prefix_symbols.txt`
-  — livekit, без изменений (кроме `.gclient`, который указывает на наш форк).
-  Java-пакет Android остаётся `livekit.org.webrtc`: на него завязана
-  JNI-инициализация в `webrtc-sys`; переименование — отдельный шаг.
-- `patches/veilmesh/` — наши патчи (пока пусто). Правило D5: флаги сборки,
-  экспорт символов, objc++-шимы; никакой логики.
-- Префиксация символов BoringSSL (`llvm-objcopy --redefine-syms`) у livekit
-  делается только для Linux. Ядру VeilMesh она **не нужна и вредна**: с
-  CF-206 SQLCipher линкуется против этого же BoringSSL как единственного
-  libcrypto процесса (`prepare_boringssl_shim.sh`). Для Linux-среза это
-  надо будет выключить на этапе C.
-- `rtc_use_h265=true` в Android-сборке livekit и прочие флаги оставлены как
-  есть ради воспроизводимости первой сборки; сужение под профиль §8 (VP8 +
-  Opus, без H.265/AV1) — следующая ревизия.
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+## Building in CI
+
+[`.github/workflows/build.yml`](.github/workflows/build.yml) builds the matrix
+on GitHub-hosted runners (macOS for iOS and macOS slices, Ubuntu for Android
+and Linux). It runs on:
+
+- **`workflow_dispatch`** — optionally with a comma-separated subset of slices
+  (`targets`), useful for a smoke build of a single slice;
+- **a pushed tag `webrtc-*`** — builds every slice and publishes the release.
+
+Expect 40 minutes (Android) to about two hours (iOS/macOS) per slice; the
+Chromium toolchain checkout is 20–40 GB. Windows slices are not built yet.
+
+## Building locally
+
+Requirements: macOS with Xcode and `ninja` for Apple slices; Linux with
+`ninja-build`, `pkg-config` and a JDK for Android and Linux slices. The scripts
+fetch `depot_tools` and the sources themselves.
+
+```bash
+echo 'target_os = ["ios"]' >> .gclient        # ios | mac | android | linux
+./build_ios.sh --arch arm64 --profile release
+./build_ios.sh --arch arm64 --profile release --environment simulator
+./build_macos.sh --arch arm64 --profile release
+./build_android.sh --arch arm64 --profile release   # Linux host only
+./build_linux.sh --arch x64 --profile release
+```
+
+The output directory (`ios-device-arm64-release/` and so on) can be used
+directly by a `webrtc-sys`-based project through the `LK_CUSTOM_WEBRTC`
+environment variable, bypassing the download.
+
+## Notes
+
+- The Android Java package stays `livekit.org.webrtc` (LiveKit's
+  `jni_prefix.patch`): the JNI initialisation in `webrtc-sys` depends on it.
+- The Linux build renames BoringSSL symbols with a `livekit_` prefix
+  (`boringssl_prefix_symbols.txt`), as LiveKit does; Apple and Android builds
+  keep BoringSSL's original symbol names.
+- Build flags are LiveKit's for now; narrowing the codec set is planned as a
+  later revision.
+
+## License
+
+The scripts and patches in this repository are licensed under the
+[Apache License 2.0](LICENSE). libwebrtc itself is BSD-licensed and bundles
+third-party components under their own licenses — every release archive
+includes the aggregated `LICENSE.md` generated during the build.
