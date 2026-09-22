@@ -1,0 +1,144 @@
+name: Build libwebrtc
+
+# Один коммит форка (VERSION / .gclient) → все срезы одной версией → релиз с
+# SHA256SUMS. Запуск: тег `webrtc-<sha7>-veilmesh.<N>` или вручную.
+#
+# Раннеры — хостовые GitHub (как у livekit): на ubuntu место освобождает
+# free-disk-space, на macOS его хватает. Если сборка не влезает — заменить
+# `runs-on` на self-hosted с той же меткой ОС.
+
+on:
+  push:
+    tags:
+      - "webrtc-*"
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "Список срезов через запятую (пусто = все): ios-device-arm64,ios-simulator-arm64,mac-arm64,mac-x64,android-arm64,android-arm,android-x64,linux-x64"
+        required: false
+        default: ""
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { name: ios,     out: ios-device-arm64,    os: macos-15,     cmd: ./build_ios.sh,     arch: arm64, buildargs: "" }
+          - { name: ios,     out: ios-simulator-arm64, os: macos-15,     cmd: ./build_ios.sh,     arch: arm64, buildargs: "--environment simulator" }
+          - { name: mac,     out: mac-arm64,           os: macos-15,     cmd: ./build_macos.sh,   arch: arm64, buildargs: "" }
+          - { name: mac,     out: mac-x64,             os: macos-15,     cmd: ./build_macos.sh,   arch: x64,   buildargs: "" }
+          - { name: android, out: android-arm64,       os: ubuntu-24.04, cmd: ./build_android.sh, arch: arm64, buildargs: "" }
+          - { name: android, out: android-arm,         os: ubuntu-24.04, cmd: ./build_android.sh, arch: arm,   buildargs: "" }
+          - { name: android, out: android-x64,         os: ubuntu-24.04, cmd: ./build_android.sh, arch: x64,   buildargs: "" }
+          - { name: linux,   out: linux-x64,           os: ubuntu-24.04, cmd: ./build_linux.sh,   arch: x64,   buildargs: "" }
+        profile: [release]
+    name: ${{ matrix.target.out }}-${{ matrix.profile }}
+    runs-on: ${{ matrix.target.os }}
+    # Ручной запуск с фильтром: собираем только перечисленное.
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.targets == '' || contains(github.event.inputs.targets, matrix.target.out) }}
+    steps:
+      - name: Variables
+        id: setup
+        shell: bash
+        run: |
+          OUT="${{ matrix.target.out }}-${{ matrix.profile }}"
+          echo "OUT=$OUT" >> "$GITHUB_OUTPUT"
+          echo "ZIP=webrtc-$OUT.zip" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Linux deps
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ninja-build pkg-config openjdk-17-jdk
+          pip3 install setuptools
+
+      - name: macOS deps
+        if: ${{ runner.os == 'macOS' }}
+        run: |
+          brew install ninja
+          # Самый свежий Xcode из установленных на образе.
+          XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then sudo xcode-select --switch "$XCODE/Contents/Developer"; fi
+          xcodebuild -version
+
+      - name: Free disk space (Linux)
+        if: ${{ runner.os == 'Linux' }}
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          android: false
+          tool-cache: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Pin check
+        shell: bash
+        run: |
+          # .gclient и VERSION обязаны указывать на один коммит.
+          set -e
+          . ./VERSION
+          grep -q "$WEBRTC_COMMIT" .gclient || { echo ".gclient не совпадает с VERSION"; exit 1; }
+          echo "target_os = [\"${{ matrix.target.name }}\"]" >> .gclient
+
+      - name: Build
+        shell: bash
+        run: ${{ matrix.target.cmd }} --arch ${{ matrix.target.arch }} --profile ${{ matrix.profile }} ${{ matrix.target.buildargs }}
+
+      - name: Provenance
+        shell: bash
+        run: |
+          . ./VERSION
+          {
+            echo "webrtc_repo=$WEBRTC_REPO"
+            echo "webrtc_commit=$WEBRTC_COMMIT"
+            echo "build_repo=${{ github.repository }}"
+            echo "build_commit=${{ github.sha }}"
+            echo "build_ref=${{ github.ref_name }}"
+            echo "runner=${{ matrix.target.os }}"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "${{ steps.setup.outputs.OUT }}/PROVENANCE.txt"
+          cp VERSION "${{ steps.setup.outputs.OUT }}/VERSION"
+
+      - name: Zip
+        shell: bash
+        run: zip -r "${{ steps.setup.outputs.ZIP }}" "${{ steps.setup.outputs.OUT }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webrtc-${{ steps.setup.outputs.OUT }}
+          path: ${{ steps.setup.outputs.ZIP }}
+          retention-days: 14
+
+  release:
+    name: Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/webrtc-')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: webrtc-*
+          merge-multiple: true
+          path: dist
+      - name: Checksums
+        run: ./tools/checksums.sh dist
+      - name: Publish
+        run: |
+          . ./VERSION
+          gh release create "${{ github.ref_name }}" dist/webrtc-*.zip dist/SHA256SUMS \
+            --title "libwebrtc ${{ github.ref_name }}" \
+            --notes "Форк emerthorn/webrtc @ ${WEBRTC_COMMIT} (upstream livekit tag ${WEBRTC_UPSTREAM_TAG}). Проверка: sha256sum -c SHA256SUMS."
