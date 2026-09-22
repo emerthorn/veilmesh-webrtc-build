@@ -36,9 +36,9 @@ jobs:
         profile: [release]
     name: ${{ matrix.target.out }}-${{ matrix.profile }}
     runs-on: ${{ matrix.target.os }}
-    # Manual runs may restrict the matrix to the listed slices.
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.targets == '' || contains(github.event.inputs.targets, matrix.target.out) }}
     steps:
+      # Manual runs may restrict the matrix to the listed slices. `matrix` is
+      # not available in a job-level `if`, so every step checks `steps.setup.outputs.SKIP`.
       - name: Variables
         id: setup
         shell: bash
@@ -46,22 +46,31 @@ jobs:
           OUT="${{ matrix.target.out }}-${{ matrix.profile }}"
           echo "OUT=$OUT" >> "$GITHUB_OUTPUT"
           echo "ZIP=webrtc-$OUT.zip" >> "$GITHUB_OUTPUT"
+          WANTED="${{ github.event.inputs.targets }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "$WANTED" ] && ! echo ",$WANTED," | grep -q ",${{ matrix.target.out }},"; then
+            echo "SKIP=true" >> "$GITHUB_OUTPUT"
+            echo "Slice ${{ matrix.target.out }} not requested — skipping."
+          else
+            echo "SKIP=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/checkout@v5
+        if: ${{ steps.setup.outputs.SKIP != 'true' }}
 
       - uses: actions/setup-python@v5
+        if: ${{ steps.setup.outputs.SKIP != 'true' }}
         with:
           python-version: "3.12"
 
       - name: Linux deps
-        if: ${{ runner.os == 'Linux' }}
+        if: ${{ steps.setup.outputs.SKIP != 'true' && runner.os == 'Linux' }}
         run: |
           sudo apt-get update -y
           sudo apt-get install -y ninja-build pkg-config openjdk-17-jdk
           pip3 install setuptools
 
       - name: macOS deps
-        if: ${{ runner.os == 'macOS' }}
+        if: ${{ steps.setup.outputs.SKIP != 'true' && runner.os == 'macOS' }}
         run: |
           brew install ninja
           # Newest Xcode present on the runner image.
@@ -70,7 +79,7 @@ jobs:
           xcodebuild -version
 
       - name: Free disk space (Linux)
-        if: ${{ runner.os == 'Linux' }}
+        if: ${{ steps.setup.outputs.SKIP != 'true' && runner.os == 'Linux' }}
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
           android: false
@@ -82,6 +91,7 @@ jobs:
           swap-storage: true
 
       - name: Pin check
+        if: ${{ steps.setup.outputs.SKIP != 'true' }}
         shell: bash
         run: |
           # .gclient and VERSION must pin the same commit.
@@ -91,10 +101,12 @@ jobs:
           echo "target_os = [\"${{ matrix.target.name }}\"]" >> .gclient
 
       - name: Build
+        if: ${{ steps.setup.outputs.SKIP != 'true' }}
         shell: bash
         run: ${{ matrix.target.cmd }} --arch ${{ matrix.target.arch }} --profile ${{ matrix.profile }} ${{ matrix.target.buildargs }}
 
       - name: Provenance
+        if: ${{ steps.setup.outputs.SKIP != 'true' }}
         shell: bash
         run: |
           . ./VERSION
@@ -110,10 +122,12 @@ jobs:
           cp VERSION "${{ steps.setup.outputs.OUT }}/VERSION"
 
       - name: Zip
+        if: ${{ steps.setup.outputs.SKIP != 'true' }}
         shell: bash
         run: zip -r "${{ steps.setup.outputs.ZIP }}" "${{ steps.setup.outputs.OUT }}"
 
       - uses: actions/upload-artifact@v4
+        if: ${{ steps.setup.outputs.SKIP != 'true' }}
         with:
           name: webrtc-${{ steps.setup.outputs.OUT }}
           path: ${{ steps.setup.outputs.ZIP }}
